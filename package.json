@@ -9,7 +9,9 @@
   "scripts": {
     "start": "electron .",
     "build:win": "electron-builder --win nsis",
-    "build:win:dir": "electron-builder --win dir"
+    "build:win:dir": "electron-builder --win dir",
+    "build:mac": "electron-builder --mac dmg",
+    "build:mac:dir": "electron-builder --mac dir"
   },
   "build": {
     "appId": "com.mineradio.desktop",
@@ -19,6 +21,7 @@
       "buildResources": "build"
     },
     "afterPack": "build/after-pack.js",
+    "afterSign": "build/mac/notarize.js",
     "toolsets": {
       "winCodeSign": "1.1.0"
     },
@@ -33,6 +36,28 @@
       "public/index.html"
     ],
     "asar": false,
+    "mac": {
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/mac/entitlements.plist",
+      "entitlementsInherit": "build/mac/entitlements.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "sign": false,
+      "artifactName": "Mineradio-${version}-mac.${ext}"
+    },
     "win": {
       "executableName": "Mineradio",
       "icon": "build/icon.ico",
@@ -89,6 +114,7 @@
     "NeteaseCloudMusicApi": "^4.32.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.3.2",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.3",
     "rcedit": "^5.0.2"

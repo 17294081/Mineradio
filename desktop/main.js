@@ -3,6 +3,15 @@ const net = require('net');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
+const paths = require('./platform/paths');
+const chromiumSwitches = require('./platform/chromium-switches');
+const shortcuts = require('./platform/shortcuts');
+const { PLATFORM } = require('./platform');
+const { createMainWindow } = require('./windows/main-window');
+const { createLyricsWindow } = require('./windows/lyrics-window');
+const { createWallpaperWindow: createWallpaperWindowFactory } = require('./windows/wallpaper-window');
+const appMenu = require('./menu');
+const hotkeys = require('./hotkeys');
 
 let mainWindow = null;
 let localServer = null;
@@ -22,7 +31,6 @@ let wallpaperState = {};
 let htmlFullscreenActive = false;
 let windowFullscreenActive = false;
 let mainWindowStateTimer = null;
-const registeredGlobalHotkeys = new Map();
 
 const WINDOWED_ASPECT = 16 / 9;
 const WINDOWED_SCALE = 3 / 4;
@@ -31,29 +39,14 @@ const MIN_WINDOWED_WIDTH = 960;
 const MIN_WINDOWED_HEIGHT = 540;
 const APP_NAME = 'Mineradio';
 const APP_USER_MODEL_ID = 'com.mineradio.desktop';
-const APP_ICON_ICO = path.join(__dirname, '..', 'build', 'icon.ico');
+const APP_ICON_PATH = paths.buildIcon(path.join(__dirname, '..'));
 const NETEASE_LOGIN_PARTITION = 'persist:mineradio-netease-login';
 const NETEASE_LOGIN_URL = 'https://music.163.com/#/login';
 const QQ_LOGIN_PARTITION = 'persist:mineradio-qqmusic-login';
 const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
 
-const CHROMIUM_PERFORMANCE_SWITCHES = [
-  ['autoplay-policy', 'no-user-gesture-required'],
-  ['ignore-gpu-blocklist'],
-  ['enable-gpu-rasterization'],
-  ['enable-oop-rasterization'],
-  ['enable-zero-copy'],
-  ['enable-accelerated-2d-canvas'],
-  ['disable-background-timer-throttling'],
-  ['disable-renderer-backgrounding'],
-  ['disable-backgrounding-occluded-windows'],
-  ['force_high_performance_gpu'],
-  ['use-angle', 'd3d11'],
-];
-for (const [name, value] of CHROMIUM_PERFORMANCE_SWITCHES) {
-  if (value == null) app.commandLine.appendSwitch(name);
-  else app.commandLine.appendSwitch(name, value);
-}
+paths.setApp(app);
+chromiumSwitches.apply(app);
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 const QQ_LOGIN_COOKIE_PRIORITY = [
@@ -133,45 +126,9 @@ function sendGlobalHotkeyAction(action) {
   mainWindow.webContents.send('mineradio-global-hotkey', { action });
 }
 
-function unregisterMineradioGlobalHotkeys() {
-  for (const accelerator of registeredGlobalHotkeys.keys()) {
-    try { globalShortcut.unregister(accelerator); } catch (e) {}
-  }
-  registeredGlobalHotkeys.clear();
-}
-
-function configureMineradioGlobalHotkeys(bindings = []) {
-  unregisterMineradioGlobalHotkeys();
-  const results = [];
-  const seen = new Set();
-  for (const item of Array.isArray(bindings) ? bindings : []) {
-    const action = item && String(item.action || '').trim();
-    const accelerator = item && String(item.accelerator || '').trim();
-    if (!action || !accelerator || seen.has(accelerator)) continue;
-    seen.add(accelerator);
-    let registered = false;
-    try {
-      registered = globalShortcut.register(accelerator, () => sendGlobalHotkeyAction(action));
-    } catch (error) {
-      registered = false;
-    }
-    if (registered) {
-      registeredGlobalHotkeys.set(accelerator, action);
-      results.push({ action, accelerator, ok: true });
-    } else {
-      results.push({
-        action,
-        accelerator,
-        ok: false,
-        conflict: {
-          sourceName: '系统 / 其他软件',
-          sourceIcon: 'warning',
-          reason: '该组合键已被占用或被系统保留',
-        },
-      });
-    }
-  }
-  return { ok: true, results };
+function sendGlobalHotkeyAction(action) {
+  if (!mainWindow || mainWindow.isDestroyed() || !action) return;
+  mainWindow.webContents.send('mineradio-global-hotkey', { action });
 }
 
 function scheduleWindowStateSend(win, delay = 80) {
@@ -269,46 +226,23 @@ function focusMainWindow() {
 }
 
 function getUpdateDownloadDir() {
-  return path.join(app.getPath('userData'), 'updates');
+  return paths.updateDownloadDir();
 }
 
 function shouldEnsureDesktopShortcut() {
-  if (process.platform !== 'win32') return false;
-  if (process.env.MINERADIO_NO_DESKTOP_SHORTCUT === '1') return false;
-  return app.isPackaged || process.env.MINERADIO_CREATE_DESKTOP_SHORTCUT === '1';
+  return shortcuts.shouldEnsure({ env: process.env, isPackaged: app.isPackaged });
 }
 
 function ensureDesktopShortcut() {
-  if (!shouldEnsureDesktopShortcut()) return { ok: false, skipped: true };
-  try {
-    const shortcutPath = path.join(app.getPath('desktop'), `${APP_NAME}.lnk`);
-    const target = process.execPath;
-    const shortcut = {
-      target,
-      cwd: path.dirname(target),
-      args: '',
-      description: 'Mineradio desktop music player',
-      icon: fs.existsSync(APP_ICON_ICO) ? APP_ICON_ICO : target,
-      iconIndex: 0,
-      appUserModelId: APP_USER_MODEL_ID,
-    };
-
-    if (fs.existsSync(shortcutPath) && shell.readShortcutLink) {
-      try {
-        const existing = shell.readShortcutLink(shortcutPath);
-        if (existing && path.resolve(existing.target || '') === path.resolve(target) && String(existing.args || '') === '') {
-          return { ok: true, path: shortcutPath, existing: true };
-        }
-      } catch (_) {}
-      shell.writeShortcutLink(shortcutPath, 'replace', shortcut);
-    } else {
-      shell.writeShortcutLink(shortcutPath, 'create', shortcut);
-    }
-    return { ok: true, path: shortcutPath, created: true };
-  } catch (e) {
-    console.warn('Desktop shortcut creation skipped:', e.message);
-    return { ok: false, error: e.message || 'DESKTOP_SHORTCUT_FAILED' };
-  }
+  return shortcuts.create({
+    shell,
+    fs,
+    path,
+    shortcutPath: paths.desktopShortcutPath(),
+    target: process.execPath,
+    iconPath: APP_ICON_PATH,
+    appUserModelId: APP_USER_MODEL_ID,
+  });
 }
 
 function parseCookieHeader(cookieText) {
@@ -417,7 +351,7 @@ async function openNeteaseMusicLoginWindow(owner) {
       autoHideMenuBar: true,
       title: '网易云音乐登录',
       backgroundColor: '#111111',
-      icon: APP_ICON_ICO,
+      icon: APP_ICON_PATH,
       webPreferences: {
         partition: NETEASE_LOGIN_PARTITION,
         contextIsolation: true,
@@ -519,7 +453,7 @@ async function openQQMusicLoginWindow(owner) {
       autoHideMenuBar: true,
       title: 'QQ 音乐登录',
       backgroundColor: '#111111',
-      icon: APP_ICON_ICO,
+      icon: APP_ICON_PATH,
       webPreferences: {
         partition: QQ_LOGIN_PARTITION,
         contextIsolation: true,
@@ -917,33 +851,10 @@ function createDesktopLyricsWindow(payload = {}) {
     return desktopLyricsWindow;
   }
 
-  desktopLyricsWindow = new BrowserWindow({
-    width: 920,
-    height: 190,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: false,
-    resizable: false,
-    movable: true,
-    focusable: false,
-    skipTaskbar: true,
-    show: false,
-    title: 'Mineradio Desktop Lyrics',
-    webPreferences: {
-      preload: path.join(__dirname, 'overlay-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false,
-    },
+  desktopLyricsWindow = createLyricsWindow({
+    preloadPath: paths.overlayPreloadScript(__dirname),
   });
-  try {
-    desktopLyricsWindow.setAlwaysOnTop(true, 'screen-saver');
-    desktopLyricsWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  } catch (e) {
-    console.warn('Desktop lyrics topmost setup skipped:', e.message);
-  }
+
   startDesktopLyricsMousePoller();
   applyDesktopLyricsMouseBehavior();
   positionDesktopLyricsWindow(desktopLyricsState, { force: yChanged || !desktopLyricsUserBounds });
@@ -1047,32 +958,15 @@ function createWallpaperWindow(payload = {}) {
     return wallpaperWindow;
   }
   const bounds = screen.getPrimaryDisplay().bounds;
-  wallpaperWindow = new BrowserWindow({
-    ...bounds,
-    frame: false,
-    transparent: false,
-    backgroundColor: '#050608',
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    focusable: false,
-    skipTaskbar: true,
-    show: false,
-    title: 'Mineradio Wallpaper',
-    webPreferences: {
-      preload: path.join(__dirname, 'overlay-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false,
-    },
+  wallpaperWindow = createWallpaperWindowFactory({
+    bounds,
+    preloadPath: paths.overlayPreloadScript(__dirname),
   });
-  wallpaperWindow.setIgnoreMouseEvents(true, { forward: true });
   wallpaperWindow.once('ready-to-show', () => {
     if (!wallpaperWindow || wallpaperWindow.isDestroyed()) return;
     positionWallpaperWindow();
     wallpaperWindow.showInactive();
-    attachWallpaperToWorkerW(wallpaperWindow);
+    if (PLATFORM.isWin) attachWallpaperToWorkerW(wallpaperWindow);
     sendWallpaperState();
   });
   wallpaperWindow.webContents.once('did-finish-load', sendWallpaperState);
@@ -1122,7 +1016,7 @@ ipcMain.handle('desktop-window-close', (event) => {
 });
 
 ipcMain.handle('mineradio-hotkeys-configure-global', (_event, bindings) => {
-  return configureMineradioGlobalHotkeys(bindings);
+  return hotkeys.configure(bindings, sendGlobalHotkeyAction);
 });
 
 ipcMain.handle('mineradio-export-json-file', async (event, payload = {}) => {
@@ -1325,11 +1219,11 @@ async function createWindow() {
 
   process.env.HOST = '127.0.0.1';
   process.env.PORT = String(port);
-  process.env.COOKIE_FILE = path.join(app.getPath('userData'), '.cookie');
-  process.env.QQ_COOKIE_FILE = path.join(app.getPath('userData'), '.qq-cookie');
-  process.env.MINERADIO_UPDATE_DIR = getUpdateDownloadDir();
+  process.env.COOKIE_FILE = paths.cookieFile();
+  process.env.QQ_COOKIE_FILE = paths.qqCookieFile();
+  process.env.MINERADIO_UPDATE_DIR = paths.updateDownloadDir();
   try {
-    const legacyQQCookie = path.join(__dirname, '..', '.qq-cookie');
+    const legacyQQCookie = paths.legacyQQCookieFile(path.join(__dirname, '..'));
     if (fs.existsSync(legacyQQCookie)) {
       if (!fs.existsSync(process.env.QQ_COOKIE_FILE)) {
         fs.copyFileSync(legacyQQCookie, process.env.QQ_COOKIE_FILE);
@@ -1340,36 +1234,16 @@ async function createWindow() {
     console.warn('QQ cookie migration skipped:', e.message);
   }
 
-  localServer = require(path.join(__dirname, '..', 'server.js'));
+  localServer = require(paths.serverEntry(path.join(__dirname, '..')));
   await waitForServer(localServer);
 
   const initialBounds = getWindowedBounds();
 
-  mainWindow = new BrowserWindow({
-    ...initialBounds,
-    minWidth: 960,
-    minHeight: 540,
-    show: false,
-    frame: false,
-    fullscreen: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: true,
-    autoHideMenuBar: true,
-    title: APP_NAME,
-    icon: APP_ICON_ICO,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false,
-    },
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
+  mainWindow = createMainWindow({
+    bounds: initialBounds,
+    preloadPath: paths.preloadScript(__dirname),
+    iconPath: APP_ICON_PATH,
+    appName: APP_NAME,
   });
 
   mainWindow.webContents.once('did-finish-load', () => {
@@ -1447,6 +1321,16 @@ if (!gotSingleInstanceLock) {
     screen.on('display-added', () => scheduleWindowStateSend(mainWindow));
     screen.on('display-removed', () => scheduleWindowStateSend(mainWindow));
     await createWindow();
+    appMenu.setAppMenu({
+      playPause: () => sendGlobalHotkeyAction('play-pause'),
+      prevTrack: () => sendGlobalHotkeyAction('prev-track'),
+      nextTrack: () => sendGlobalHotkeyAction('next-track'),
+      toggleLyrics: () => sendGlobalHotkeyAction('toggle-desktop-lyrics'),
+    });
+    if (PLATFORM.isMac) {
+      const defaultBindings = hotkeys.getDefaultBindings();
+      hotkeys.configure(defaultBindings, sendGlobalHotkeyAction);
+    }
   });
 
   app.on('activate', () => {
@@ -1459,7 +1343,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on('before-quit', () => {
-    unregisterMineradioGlobalHotkeys();
+    hotkeys.unregisterAll();
     closeOverlayWindows();
     if (localServer && localServer.close) localServer.close();
   });

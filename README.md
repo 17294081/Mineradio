@@ -2,16 +2,18 @@
 
 ![Mineradio 暗场启动页](./docs/assets/readme/cinema-beat-smoke.png)
 
-Mineradio 是一款 Windows 桌面沉浸式音乐播放器，把天气电台、搜索播放、歌词舞台、粒子视觉和 3D 歌单架组合成一个更接近现场感的私人音乐空间。
+Mineradio 是一款跨平台桌面沉浸式音乐播放器，把天气电台、搜索播放、歌词舞台、粒子视觉和 3D 歌单架组合成一个更接近现场感的私人音乐空间。
+
+> **平台支持**：Windows（NSIS 安装包） · macOS（DMG / ZIP）
 
 ## 立即下载 Windows 安装包
 
 > 国内 GitHub 小白用户：优先使用蓝奏云下载，打开链接后直接下载 `Mineradio-1.1.1-Setup.exe`，速度通常比 GitHub Release 更稳、更接近满速。
 
-| 下载入口 | 推荐人群 | 链接 |
-| --- | --- | --- |
-| 蓝奏云满速下载 | 国内用户优先 | [下载 Mineradio 1.1.1 安装包](https://xxhuber.lanzout.com/s/Mineradio) |
-| GitHub Release 备用 | 能稳定访问 GitHub 的用户 | [v1.1.1 Release](https://github.com/XxHuberrr/Mineradio/releases/tag/v1.1.1) |
+| 下载入口 | 平台 | 推荐人群 | 链接 |
+| --- | --- | --- | --- |
+| Windows 安装包 | Windows | 所有 Windows 用户 | [GitHub Release v1.1.1](https://github.com/XxHuberrr/Mineradio/releases/tag/v1.1.1) |
+| macOS DMG | macOS | Intel / Apple Silicon | [GitHub Release v1.2.0](https://github.com/XxHuberrr/Mineradio/releases) |
 
 安装时只需要下载并运行 `Mineradio-1.1.1-Setup.exe`。不要下载 `Source code`、`.blockmap`、`latest.yml`，也不要把 `win-unpacked` 当成正式安装包。
 
@@ -70,10 +72,22 @@ Windows 用户可以在 GitHub Releases 中下载安装包。
 ```bash
 npm install
 npm start
+
+# Windows
 npm run build:win
+
+# macOS（本地构建，不签名）
+npm run build:mac:dir
+
+# macOS（完整 DMG，需 Apple Developer ID）
+npm run build:mac
 ```
 
-桌面版入口由 Electron 主进程加载本地服务。`npm run build:win` 会生成 Windows NSIS 安装包，产物位于 `dist/`。
+桌面版入口由 Electron 主进程加载本地服务。构建产物位于 `dist/`。
+
+- `npm run build:win` 生成 Windows NSIS 安装包
+- `npm run build:mac` 生成 macOS DMG（需要配置 `APPLE_ID`、`APPLE_TEAM_ID` 环境变量）
+- `npm run build:mac:dir` 生成 macOS 应用目录（无需签名，适合本地测试）
 
 ## 更新机制
 
