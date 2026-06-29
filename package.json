@@ -21,7 +21,6 @@
       "buildResources": "build"
     },
     "afterPack": "build/after-pack.js",
-    "afterSign": "build/mac/notarize.js",
     "toolsets": {
       "winCodeSign": "1.1.0"
     },
@@ -38,12 +37,11 @@
     "asar": false,
     "mac": {
       "category": "public.app-category.music",
+      "identity": null,
       "forceCodeSigning": false,
       "icon": "build/icon.icns",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "entitlements": "build/mac/entitlements.plist",
-      "entitlementsInherit": "build/mac/entitlements.plist",
       "target": [
         {
           "target": "dmg",
