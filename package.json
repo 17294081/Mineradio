@@ -38,6 +38,7 @@
     "asar": false,
     "mac": {
       "category": "public.app-category.music",
+      "forceCodeSigning": false,
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
